@@ -322,11 +322,7 @@ class Post(HideableCRUDMixin, db.Model):
                     topic.last_post = self
 
                     # Update the last post info for the forum
-                    topic.forum.last_post = self
-                    topic.forum.last_post_user = self.user
-                    topic.forum.last_post_title = topic.title
-                    topic.forum.last_post_username = user.username
-                    topic.forum.last_post_created = created
+                    self._update_forum_last_post(topic, user, created)
 
                     # Update the post counts
                     user.post_count += 1
@@ -338,6 +334,14 @@ class Post(HideableCRUDMixin, db.Model):
             db.session.commit()
             pluggy.hook.flaskbb_event_post_save_after(post=self, is_new=True)
             return self
+
+    def _update_forum_last_post(self, topic, user, created):
+        """Updates the forum's last post information."""
+        topic.forum.last_post = self
+        topic.forum.last_post_user = self.user
+        topic.forum.last_post_title = topic.title
+        topic.forum.last_post_username = user.username
+        topic.forum.last_post_created = created
 
     @override
     def delete(self):
