@@ -1404,48 +1404,32 @@ class Forum(db.Model, CRUDMixin):
 
     @classmethod
     def get_topics(cls, forum_id: int, user: "User", page: int = 1, per_page: int = 20):
-        """Get the topics for the forum. If the user is logged in,
-        it will perform an outerjoin for the topics with the topicsread and
-        forumsread relation to check if it is read or unread.
+        """Get the topics for the forum."""
+        stmt = db.select(Topic, Post)
 
-        :param forum_id: The forum id
-        :param user: The user object
-        :param page: The page whom should be loaded
-        :param per_page: How many topics per page should be shown
-        """
         if user.is_authenticated:
-            # Now thats intersting - if i don't do the add_entity(Post)
-            # the n+1 still exists when trying to access 'topic.last_post'
-            # but without it it will fire another query.
-            # This way I don't have to use the last_post object when I
-            # iterate over the result set.
-            stmt = (
-                db.select(Topic, Post, TopicsRead)
-                .outerjoin(
-                    TopicsRead,
-                    db.and_(
-                        TopicsRead.topic_id == Topic.id,
-                        TopicsRead.user_id == user.id,
-                    ),
-                )
-                .outerjoin(Post, Topic.last_post_id == Post.id)
-                .where(Topic.forum_id == forum_id)
-                .order_by(Topic.important.desc(), Topic.last_updated.desc())
+            stmt = db.select(Topic, Post, TopicsRead).outerjoin(
+                TopicsRead,
+                db.and_(
+                    TopicsRead.topic_id == Topic.id,
+                    TopicsRead.user_id == user.id,
+                ),
             )
-            hidden(stmt)
-            topics = paginate(stmt, page=page, per_page=per_page)
-        else:
-            stmt = (
-                db.select(Topic, Post)
-                .outerjoin(Post, Topic.last_post_id == Post.id)
-                .where(Topic.forum_id == forum_id)
-                .order_by(Topic.important.desc(), Topic.last_updated.desc())
-            )
-            stmt = hidden(stmt)
-            topics = paginate(stmt, page=page, per_page=per_page)
+
+        stmt = (
+            stmt.outerjoin(Post, Topic.last_post_id == Post.id)
+            .where(Topic.forum_id == forum_id)
+            .order_by(Topic.important.desc(), Topic.last_updated.desc())
+        )
+
+        stmt = hidden(stmt)
+        topics = paginate(stmt, page=page, per_page=per_page)
+
+        if not user.is_authenticated:
             topics.items = [
                 (topic, last_post, None) for topic, last_post in topics.items
             ]
+
         return topics
 
 
