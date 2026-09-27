@@ -332,7 +332,10 @@ class Post(HideableCRUDMixin, db.Model):
             # And commit it!
             db.session.add(self)
             db.session.commit()
-            pluggy.hook.flaskbb_event_post_save_after(post=self, is_new=True)
+            pluggy.hook.flaskbb_event_post_save_after(
+                post=self,
+                is_new=True,
+            )
             return self
 
     def _update_forum_last_post(self, topic, user, created):
