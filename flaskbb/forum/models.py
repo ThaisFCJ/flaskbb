@@ -774,9 +774,9 @@ class Topic(HideableCRUDMixin, db.Model):
         topicsread.save()
 
         # Save True/False if the forums tracker has been updated.
-        updated = forum.update_read(user, forumsread, topicsread)
+        tracker_updated = forum.update_read(user, forumsread, topicsread)
 
-        return updated
+        return tracker_updated
 
     def recalculate(self):
         """Recalculates the post count in the topic."""
