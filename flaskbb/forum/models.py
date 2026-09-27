@@ -322,22 +322,28 @@ class Post(HideableCRUDMixin, db.Model):
                     topic.last_post = self
 
                     # Update the last post info for the forum
-                    topic.forum.last_post = self
-                    topic.forum.last_post_user = self.user
-                    topic.forum.last_post_title = topic.title
-                    topic.forum.last_post_username = user.username
-                    topic.forum.last_post_created = created
+                    self._update_forum_last_post(topic, user, created)
 
                     # Update the post counts
                     user.post_count += 1
                     topic.post_count += 1
                     topic.forum.post_count += 1
 
-            # And commit it!
             db.session.add(self)
             db.session.commit()
-            pluggy.hook.flaskbb_event_post_save_after(post=self, is_new=True)
+            pluggy.hook.flaskbb_event_post_save_after(
+                post=self,
+                is_new=True,
+            )
             return self
+
+    def _update_forum_last_post(self, topic, user, created):
+        """Updates the forum's last post information."""
+        topic.forum.last_post = self
+        topic.forum.last_post_user = self.user
+        topic.forum.last_post_title = topic.title
+        topic.forum.last_post_username = user.username
+        topic.forum.last_post_created = created
 
     @override
     def delete(self):
@@ -755,38 +761,24 @@ class Topic(HideableCRUDMixin, db.Model):
         if not self.tracker_needs_update(forumsread, topicsread):
             return False
 
-        # Because we return True/False if the trackers have been
-        # updated, we need to store the status in a temporary variable
-        updated = False
-
-        # A new post has been submitted that the user hasn't read.
-        # Updating...
         if topicsread:
-            logger.debug("Updating existing TopicsRead '{}' object.".format(topicsread))
-            topicsread.last_read = time_utcnow()
-            topicsread.save()
-            updated = True
-
-        # The user has not visited the topic before. Inserting him in
-        # the TopicsRead model.
-        elif not topicsread:
+            logger.debug(
+                "Updating existing TopicsRead '{}' object.".format(topicsread)
+            )
+        else:
             logger.debug("Creating new TopicsRead object.")
             topicsread = TopicsRead()
             topicsread.user = user
             topicsread.topic = self
             topicsread.forum = self.forum
-            topicsread.last_read = time_utcnow()
-            topicsread.save()
-            updated = True
 
-        # No unread posts
-        else:
-            updated = False
+        topicsread.last_read = time_utcnow()
+        topicsread.save()
 
         # Save True/False if the forums tracker has been updated.
-        updated = forum.update_read(user, forumsread, topicsread)
+        tracker_updated = forum.update_read(user, forumsread, topicsread)
 
-        return updated
+        return tracker_updated
 
     def recalculate(self):
         """Recalculates the post count in the topic."""
@@ -852,34 +844,37 @@ class Topic(HideableCRUDMixin, db.Model):
             logger.error("Cant create a topic without a user or forum")
             return
 
+        self._create_topic(user, forum, post)
+
+        pluggy.hook.flaskbb_event_topic_save_after(topic=self, is_new=True)
+        return self
+
+    def _create_topic(
+        self,
+        user: "User",
+        forum: "Forum",
+        post: Post | None = None,
+    ):
+        """Creates a topic and its first post."""
         with db.session.no_autoflush:
-            # Set the forum and user id
             self.forum = forum
             self.user = user
             self.username = user.username
 
-            # Set the last_updated time. Needed for the readstracker
             self.date_created = self.last_updated = time_utcnow()
 
-            # Insert and commit the topic
             db.session.add(self)
             db.session.commit()
 
             if post is not None:
                 self._post = post
 
-            # Create the topic post
             self._post.save(user, self)
 
-            # Update the first and last post id
             self.last_post = self.first_post = self._post
-
-            # Update the topic count
             forum.topic_count += 1
 
         db.session.commit()
-        pluggy.hook.flaskbb_event_topic_save_after(topic=self, is_new=True)
-        return self
 
     @override
     def delete(self):
@@ -1401,48 +1396,32 @@ class Forum(db.Model, CRUDMixin):
 
     @classmethod
     def get_topics(cls, forum_id: int, user: "User", page: int = 1, per_page: int = 20):
-        """Get the topics for the forum. If the user is logged in,
-        it will perform an outerjoin for the topics with the topicsread and
-        forumsread relation to check if it is read or unread.
+        """Get the topics for the forum."""
+        stmt = db.select(Topic, Post)
 
-        :param forum_id: The forum id
-        :param user: The user object
-        :param page: The page whom should be loaded
-        :param per_page: How many topics per page should be shown
-        """
         if user.is_authenticated:
-            # Now thats intersting - if i don't do the add_entity(Post)
-            # the n+1 still exists when trying to access 'topic.last_post'
-            # but without it it will fire another query.
-            # This way I don't have to use the last_post object when I
-            # iterate over the result set.
-            stmt = (
-                db.select(Topic, Post, TopicsRead)
-                .outerjoin(
-                    TopicsRead,
-                    db.and_(
-                        TopicsRead.topic_id == Topic.id,
-                        TopicsRead.user_id == user.id,
-                    ),
-                )
-                .outerjoin(Post, Topic.last_post_id == Post.id)
-                .where(Topic.forum_id == forum_id)
-                .order_by(Topic.important.desc(), Topic.last_updated.desc())
+            stmt = db.select(Topic, Post, TopicsRead).outerjoin(
+                TopicsRead,
+                db.and_(
+                    TopicsRead.topic_id == Topic.id,
+                    TopicsRead.user_id == user.id,
+                ),
             )
-            hidden(stmt)
-            topics = paginate(stmt, page=page, per_page=per_page)
-        else:
-            stmt = (
-                db.select(Topic, Post)
-                .outerjoin(Post, Topic.last_post_id == Post.id)
-                .where(Topic.forum_id == forum_id)
-                .order_by(Topic.important.desc(), Topic.last_updated.desc())
-            )
-            stmt = hidden(stmt)
-            topics = paginate(stmt, page=page, per_page=per_page)
+
+        stmt = (
+            stmt.outerjoin(Post, Topic.last_post_id == Post.id)
+            .where(Topic.forum_id == forum_id)
+            .order_by(Topic.important.desc(), Topic.last_updated.desc())
+        )
+
+        stmt = hidden(stmt)
+        topics = paginate(stmt, page=page, per_page=per_page)
+
+        if not user.is_authenticated:
             topics.items = [
                 (topic, last_post, None) for topic, last_post in topics.items
             ]
+
         return topics
 
 
