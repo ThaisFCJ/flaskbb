@@ -329,7 +329,6 @@ class Post(HideableCRUDMixin, db.Model):
                     topic.post_count += 1
                     topic.forum.post_count += 1
 
-            # And commit it!
             db.session.add(self)
             db.session.commit()
             pluggy.hook.flaskbb_event_post_save_after(
