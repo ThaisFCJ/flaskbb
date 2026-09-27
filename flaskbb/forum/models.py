@@ -852,34 +852,37 @@ class Topic(HideableCRUDMixin, db.Model):
             logger.error("Cant create a topic without a user or forum")
             return
 
+        self._create_topic(user, forum, post)
+
+        pluggy.hook.flaskbb_event_topic_save_after(topic=self, is_new=True)
+        return self
+
+    def _create_topic(
+        self,
+        user: "User",
+        forum: "Forum",
+        post: Post | None = None,
+    ):
+        """Creates a topic and its first post."""
         with db.session.no_autoflush:
-            # Set the forum and user id
             self.forum = forum
             self.user = user
             self.username = user.username
 
-            # Set the last_updated time. Needed for the readstracker
             self.date_created = self.last_updated = time_utcnow()
 
-            # Insert and commit the topic
             db.session.add(self)
             db.session.commit()
 
             if post is not None:
                 self._post = post
 
-            # Create the topic post
             self._post.save(user, self)
 
-            # Update the first and last post id
             self.last_post = self.first_post = self._post
-
-            # Update the topic count
             forum.topic_count += 1
 
         db.session.commit()
-        pluggy.hook.flaskbb_event_topic_save_after(topic=self, is_new=True)
-        return self
 
     @override
     def delete(self):
