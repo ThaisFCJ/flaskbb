@@ -759,33 +759,19 @@ class Topic(HideableCRUDMixin, db.Model):
         if not self.tracker_needs_update(forumsread, topicsread):
             return False
 
-        # Because we return True/False if the trackers have been
-        # updated, we need to store the status in a temporary variable
-        updated = False
-
-        # A new post has been submitted that the user hasn't read.
-        # Updating...
         if topicsread:
-            logger.debug("Updating existing TopicsRead '{}' object.".format(topicsread))
-            topicsread.last_read = time_utcnow()
-            topicsread.save()
-            updated = True
-
-        # The user has not visited the topic before. Inserting him in
-        # the TopicsRead model.
-        elif not topicsread:
+            logger.debug(
+                "Updating existing TopicsRead '{}' object.".format(topicsread)
+            )
+        else:
             logger.debug("Creating new TopicsRead object.")
             topicsread = TopicsRead()
             topicsread.user = user
             topicsread.topic = self
             topicsread.forum = self.forum
-            topicsread.last_read = time_utcnow()
-            topicsread.save()
-            updated = True
 
-        # No unread posts
-        else:
-            updated = False
+        topicsread.last_read = time_utcnow()
+        topicsread.save()
 
         # Save True/False if the forums tracker has been updated.
         updated = forum.update_read(user, forumsread, topicsread)
